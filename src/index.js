@@ -1,4 +1,3 @@
-import { connect } from "cloudflare:sockets";
 import {
   DEFAULT_HEARTBEAT_SEC,
   DEFAULT_HTTP_TIMEOUT_MS,
@@ -606,6 +605,9 @@ async function runScheduledSweep(env, scheduledTime = Date.now()) {
   ).all();
 
   for (const channel of channels.results) {
+    if (!["http", "https", "head"].includes(channel.protocol)) {
+      continue;
+    }
     const checkResult = await executeChannelCheck(channel);
     await env.DB.prepare(
       `UPDATE channels
@@ -656,42 +658,25 @@ async function executeChannelCheck(channel) {
   const observedAt = nowIso();
   const timeoutMs = channel.timeout_ms || DEFAULT_HTTP_TIMEOUT_MS;
   const startedAt = Date.now();
-  let timeoutId;
 
   try {
-    if (protocol === "http" || protocol === "https") {
-      const { url } = parseTarget(channel.target, protocol);
-      const method = channel.protocol === "head" ? "HEAD" : "GET";
-      const controller = new AbortController();
-      timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-      const response = await fetch(url.toString(), {
-        method,
-        redirect: "manual",
-        signal: controller.signal,
-      });
-      const allowedStatuses = expectedHttpStatuses(JSON.parse(channel.expected_statuses_json || "[]"));
-      const passed = allowedStatuses.includes(response.status);
-      return {
-        status: passed ? "pass" : "fail",
-        observedAt,
-        latencyMs: Date.now() - startedAt,
-        error: passed ? null : `Unexpected HTTP status ${response.status}`,
-      };
-    }
-
-    const { host, port } = parseTarget(channel.target, protocol);
-    const socket = connect(
-      { hostname: host, port },
-      { secureTransport: protocol === "tls" ? "on" : "off" },
-    );
-    timeoutId = setTimeout(() => socket.close(), timeoutMs);
-    await socket.opened;
-    socket.close();
+    const { url } = parseTarget(channel.target, protocol);
+    const method = channel.protocol === "head" ? "HEAD" : "GET";
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const response = await fetch(url.toString(), {
+      method,
+      redirect: "manual",
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    const allowedStatuses = expectedHttpStatuses(JSON.parse(channel.expected_statuses_json || "[]"));
+    const passed = allowedStatuses.includes(response.status);
     return {
-      status: "pass",
+      status: passed ? "pass" : "fail",
       observedAt,
       latencyMs: Date.now() - startedAt,
-      error: null,
+      error: passed ? null : `Unexpected HTTP status ${response.status}`,
     };
   } catch (error) {
     return {
@@ -700,8 +685,6 @@ async function executeChannelCheck(channel) {
       latencyMs: Date.now() - startedAt,
       error: error?.message || "Unknown check failure",
     };
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
   }
 }
 

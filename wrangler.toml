@@ -12,5 +12,5 @@ crons = ["*/1 * * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "proxy_reliability"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "a1fa461e-da3a-41f6-aedc-22a643f74412"
 migrations_dir = "migrations"
