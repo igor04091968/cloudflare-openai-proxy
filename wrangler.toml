@@ -6,6 +6,12 @@ workers_dev = true
 [observability]
 enabled = true
 
+[env.production]
+
+[[env.production.routes]]
+pattern = "ops.iri1968.dpdns.org"
+custom_domain = true
+
 [triggers]
 crons = ["*/1 * * * *"]
 

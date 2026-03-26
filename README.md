@@ -21,6 +21,18 @@ The Worker expects these bindings:
 - `AI` - optional Workers AI binding
 - `AI_MODEL` - optional Workers AI model override
 
+## Canonical Endpoints
+
+Current Workers.dev endpoint:
+
+- `https://cloudflare-openai-proxy.iri1968.workers.dev`
+
+Attached custom domain:
+
+- `https://ops.iri1968.dpdns.org`
+
+If the custom domain responds with a Cloudflare challenge instead of JSON, the Worker is attached correctly but the zone still has a security rule that must be skipped for this hostname.
+
 ## Local Scripts
 
 ```bash
