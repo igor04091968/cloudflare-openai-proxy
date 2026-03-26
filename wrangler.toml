@@ -6,6 +6,12 @@ workers_dev = true
 [observability]
 enabled = true
 
+[ai]
+binding = "AI"
+
+[vars]
+AI_MODEL = "@cf/meta/llama-3.1-8b-instruct"
+
 [env.production]
 
 [[env.production.routes]]

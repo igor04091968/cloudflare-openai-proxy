@@ -21,6 +21,8 @@ The Worker expects these bindings:
 - `AI` - optional Workers AI binding
 - `AI_MODEL` - optional Workers AI model override
 
+The current production setup uses `AI` with `@cf/meta/llama-3.1-8b-instruct` for incident summaries.
+
 ## Canonical Endpoints
 
 Current Workers.dev endpoint:
@@ -183,6 +185,13 @@ curl -H "Authorization: Bearer $ADMIN_TOKEN" \
 ```bash
 curl -H "Authorization: Bearer $ADMIN_TOKEN" \
   "$WORKER_URL/v1/admin/incidents/$INCIDENT_ID/events"
+```
+
+Run AI analysis for an incident:
+
+```bash
+curl -X POST "$WORKER_URL/v1/admin/incidents/$INCIDENT_ID/ai-analyze" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
 ### Run a manual sweep
