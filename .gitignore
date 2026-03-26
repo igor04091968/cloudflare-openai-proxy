@@ -2,3 +2,7 @@ node_modules/
 .wrangler/
 dist/
 .admin-token.local
+.cf-api-token
+.cf-content-*
+.cf-curl-auth.conf
+.zz-test

@@ -41,3 +41,8 @@ test("dedupe and severity helpers stay deterministic", () => {
   assert.equal(deriveSeverity("fail"), "critical");
   assert.equal(deriveSeverity("warn"), "warning");
 });
+
+test("normalizeSlug keeps node references stable for channel upserts", () => {
+  assert.equal(normalizeSlug("GW-1"), "gw-1");
+  assert.equal(normalizeSlug("Gateway 1"), "gateway-1");
+});
