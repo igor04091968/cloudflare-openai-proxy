@@ -34,6 +34,7 @@ import {
   upsertPolicy,
   upsertRunbook,
 } from "./remediation.js";
+import { renderOperatorApp } from "./ui.js";
 
 const AI_DEFAULT_MODEL = "@cf/meta/llama-3.1-8b-instruct";
 
@@ -71,6 +72,16 @@ async function handleRequest(request, env) {
 
   if (request.method === "GET" && path === "/healthz") {
     return json(okEnvelope({ status: "ok", time: nowIso() }));
+  }
+
+  if (request.method === "GET" && path === "/app") {
+    return renderOperatorApp();
+  }
+
+  if (request.method === "GET" && path === "/v1/admin/projects") {
+    await requireAdmin(request, env);
+    const result = await listProjects(env);
+    return json(okEnvelope({ projects: result }));
   }
 
   if (request.method === "POST" && path === "/v1/admin/bootstrap") {
@@ -700,6 +711,63 @@ async function getProjectStatus(env, projectSlug) {
     channels: channels.results,
     incidents: incidents.results,
   };
+}
+
+async function listProjects(env) {
+  assertDb(env);
+  const projects = await env.DB.prepare(
+    `SELECT id, slug, name
+     FROM projects
+     ORDER BY slug ASC`,
+  ).all();
+
+  const summaries = [];
+  for (const project of projects.results) {
+    const nodes = await env.DB.prepare(
+      `SELECT slug, status, last_heartbeat_at
+       FROM nodes
+       WHERE project_id = ?1
+       ORDER BY slug`,
+    )
+      .bind(project.id)
+      .all();
+    const channels = await env.DB.prepare(
+      `SELECT slug, status, last_checked_at
+       FROM channels
+       WHERE project_id = ?1
+       ORDER BY slug`,
+    )
+      .bind(project.id)
+      .all();
+    const incidents = await env.DB.prepare(
+      `SELECT id, severity, status, last_seen_at
+       FROM incidents
+       WHERE project_id = ?1
+       ORDER BY last_seen_at DESC`,
+    )
+      .bind(project.id)
+      .all();
+
+    const lastHeartbeatAt = nodes.results.reduce((latest, node) => {
+      if (!node.last_heartbeat_at) return latest;
+      if (!latest) return node.last_heartbeat_at;
+      return Date.parse(node.last_heartbeat_at) > Date.parse(latest) ? node.last_heartbeat_at : latest;
+    }, null);
+
+    const openIncidents = incidents.results.filter((incident) => incident.status === "open");
+    summaries.push({
+      slug: project.slug,
+      name: project.name,
+      overall: deriveOverallStatus(nodes.results, channels.results, incidents.results),
+      nodeCount: nodes.results.length,
+      channelCount: channels.results.length,
+      openIncidentCount: openIncidents.length,
+      criticalOpenIncidentCount: openIncidents.filter((incident) => incident.severity === "critical").length,
+      lastHeartbeatAt,
+    });
+  }
+
+  return summaries;
 }
 
 async function listIncidents(env, projectSlug) {

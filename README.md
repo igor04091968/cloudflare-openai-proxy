@@ -36,6 +36,10 @@ Attached custom domain:
 
 If the custom domain responds with a Cloudflare challenge instead of JSON, the Worker is attached correctly but the zone still has a security rule that must be skipped for this hostname.
 
+Operator web panel:
+
+- `https://ops.iri1968.dpdns.org/app`
+
 ## Local Scripts
 
 ```bash
@@ -170,6 +174,13 @@ curl -X POST "$WORKER_URL/v1/agent/heartbeat" \
 
 ### Query project status
 
+List projects:
+
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "$WORKER_URL/v1/admin/projects"
+```
+
 Admin:
 
 ```bash
@@ -201,6 +212,24 @@ Run AI analysis for an incident:
 curl -X POST "$WORKER_URL/v1/admin/incidents/$INCIDENT_ID/ai-analyze" \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
+
+### Operator Web Panel
+
+Open the panel at:
+
+```text
+https://ops.iri1968.dpdns.org/app
+```
+
+The panel uses the existing admin API and currently supports:
+
+- saving the admin token in browser localStorage;
+- browsing all projects;
+- viewing node/channel health and open incidents;
+- running AI analysis;
+- creating remediation actions from incident cards;
+- approving or canceling pending actions;
+- running manual sweeps for the selected project.
 
 ### Run a manual sweep
 
