@@ -1,0 +1,15 @@
+[Unit]
+Description=VDS Proxy Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/vds-proxy-agent
+ExecStart=/opt/vds-proxy-agent/vds-proxy-agent -config /etc/vds-proxy-agent/config.yaml
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

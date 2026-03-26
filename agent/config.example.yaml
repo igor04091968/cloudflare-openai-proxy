@@ -1,0 +1,38 @@
+worker_url: https://ops.iri1968.dpdns.org
+agent_token: replace-me
+project_slug: proxy-prod
+
+node:
+  slug: gw-1
+  name: Gateway 1
+  hostname: gw1.example.net
+  region: eu-central
+
+heartbeat_sec: 30
+pull_actions_sec: 10
+lease_sec: 120
+
+checks:
+  - slug: gw1-http
+    name: GW1 HTTP
+    protocol: https
+    target: https://example.com
+    timeout_ms: 5000
+  - slug: gw1-socks
+    name: GW1 SOCKS
+    protocol: tcp
+    target: 127.0.0.1:1080
+    timeout_ms: 3000
+
+allowed_services:
+  - vds-proxy
+  - xray
+  - sing-box
+
+upstream_profiles:
+  primary: /etc/vds-proxy/upstreams/primary.json
+  backup-1: /etc/vds-proxy/upstreams/backup-1.json
+
+active_upstream_path: /etc/vds-proxy/upstreams/current.json
+reload_service_after_switch: vds-proxy
+drain_file_path: /var/lib/vds-proxy-agent/drain.flag

@@ -17,6 +17,23 @@ import {
   sha256Hex,
   statusFromCheckResult,
 } from "./core.js";
+import {
+  approveRemediationAction,
+  cancelRemediationAction,
+  createIncidentRemediationAction,
+  listActionEvents,
+  listActions,
+  listNodeCapabilities,
+  listPolicies,
+  listRunbooks,
+  planIncidentRemediation,
+  pullAgentActions,
+  scheduleIncidentRemediation,
+  submitActionResult,
+  upsertNodeCapability,
+  upsertPolicy,
+  upsertRunbook,
+} from "./remediation.js";
 
 const AI_DEFAULT_MODEL = "@cf/meta/llama-3.1-8b-instruct";
 
@@ -112,6 +129,97 @@ async function handleRequest(request, env) {
     return json(okEnvelope(result));
   }
 
+  if (request.method === "POST" && path.startsWith("/v1/admin/incidents/") && path.endsWith("/remediation/plan")) {
+    await requireAdmin(request, env);
+    const incidentId = path.split("/")[4];
+    const result = await planIncidentRemediation(env, incidentId);
+    return json(okEnvelope(result));
+  }
+
+  if (request.method === "POST" && path.startsWith("/v1/admin/incidents/") && path.endsWith("/remediation/actions")) {
+    await requireAdmin(request, env);
+    const incidentId = path.split("/")[4];
+    const body = await readJson(request);
+    const result = await createIncidentRemediationAction(env, incidentId, body);
+    return json(okEnvelope(result), { status: 201 });
+  }
+
+  if (request.method === "GET" && path === "/v1/admin/runbooks") {
+    await requireAdmin(request, env);
+    const result = await listRunbooks(env);
+    return json(okEnvelope({ runbooks: result }));
+  }
+
+  if (request.method === "POST" && path === "/v1/admin/runbooks") {
+    await requireAdmin(request, env);
+    const body = await readJson(request);
+    const result = await upsertRunbook(env, body);
+    return json(okEnvelope(result), { status: 201 });
+  }
+
+  if (request.method === "GET" && path === "/v1/admin/policies") {
+    await requireAdmin(request, env);
+    const result = await listPolicies(env, url.searchParams.get("project"));
+    return json(okEnvelope({ policies: result }));
+  }
+
+  if (request.method === "POST" && path === "/v1/admin/policies") {
+    await requireAdmin(request, env);
+    const body = await readJson(request);
+    const result = await upsertPolicy(env, body);
+    return json(okEnvelope(result), { status: 201 });
+  }
+
+  if (request.method === "GET" && path === "/v1/admin/node-capabilities") {
+    await requireAdmin(request, env);
+    const result = await listNodeCapabilities(
+      env,
+      url.searchParams.get("project"),
+      url.searchParams.get("node"),
+    );
+    return json(okEnvelope({ capabilities: result }));
+  }
+
+  if (request.method === "POST" && path === "/v1/admin/node-capabilities") {
+    await requireAdmin(request, env);
+    const body = await readJson(request);
+    const result = await upsertNodeCapability(env, body);
+    return json(okEnvelope(result), { status: 201 });
+  }
+
+  if (request.method === "GET" && path === "/v1/admin/actions") {
+    await requireAdmin(request, env);
+    const result = await listActions(env, {
+      projectSlug: url.searchParams.get("project"),
+      status: url.searchParams.get("status"),
+      incidentId: url.searchParams.get("incidentId"),
+    });
+    return json(okEnvelope({ actions: result }));
+  }
+
+  if (request.method === "GET" && path.startsWith("/v1/admin/actions/") && path.endsWith("/events")) {
+    await requireAdmin(request, env);
+    const actionId = path.split("/")[4];
+    const result = await listActionEvents(env, actionId);
+    return json(okEnvelope({ actionId, events: result }));
+  }
+
+  if (request.method === "POST" && path.startsWith("/v1/admin/actions/") && path.endsWith("/approve")) {
+    await requireAdmin(request, env);
+    const actionId = path.split("/")[4];
+    const body = request.headers.get("content-length") === "0" ? {} : await readOptionalJson(request);
+    const result = await approveRemediationAction(env, actionId, body);
+    return json(okEnvelope(result));
+  }
+
+  if (request.method === "POST" && path.startsWith("/v1/admin/actions/") && path.endsWith("/cancel")) {
+    await requireAdmin(request, env);
+    const actionId = path.split("/")[4];
+    const body = request.headers.get("content-length") === "0" ? {} : await readOptionalJson(request);
+    const result = await cancelRemediationAction(env, actionId, body);
+    return json(okEnvelope(result));
+  }
+
   if (request.method === "GET" && path === "/v1/admin/agent-tokens") {
     await requireAdmin(request, env);
     const projectSlug = url.searchParams.get("project");
@@ -145,6 +253,21 @@ async function handleRequest(request, env) {
     const body = await readJson(request);
     const result = await ingestHeartbeat(env, token, body, request);
     return json(okEnvelope(result), { status: 202 });
+  }
+
+  if (request.method === "POST" && path === "/v1/agent/pull-actions") {
+    const token = await requireAgent(request, env);
+    const body = request.headers.get("content-length") === "0" ? {} : await readOptionalJson(request);
+    const result = await pullAgentActions(env, token, body);
+    return json(okEnvelope(result));
+  }
+
+  if (request.method === "POST" && path.startsWith("/v1/agent/actions/") && path.endsWith("/result")) {
+    const token = await requireAgent(request, env);
+    const actionId = path.split("/")[4];
+    const body = await readJson(request);
+    const result = await submitActionResult(env, token, actionId, body);
+    return json(okEnvelope(result));
   }
 
   if (request.method === "GET" && path.startsWith("/v1/status/")) {
@@ -1005,6 +1128,7 @@ async function openOrRefreshIncident(env, incident) {
     )
     .run();
   await appendIncidentEvent(env, incidentId, "opened", { summary: incident.summary });
+  await scheduleIncidentRemediation(env, incidentId);
   return incidentId;
 }
 

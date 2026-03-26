@@ -10,6 +10,7 @@ The first MVP focuses on:
 - incident creation and recovery tracking in D1;
 - scheduled sweeps that detect stale nodes and run edge-side health checks;
 - manual admin utilities for sweeps, incident timelines, and agent token lifecycle;
+- policy-driven remediation with queued actions for VDS node agents;
 - optional Workers AI incident summaries.
 
 ## Worker Resources
@@ -40,6 +41,13 @@ If the custom domain responds with a Cloudflare challenge instead of JSON, the W
 ```bash
 npm install
 npm test
+```
+
+Node agent:
+
+```bash
+cd agent
+go build ./...
 ```
 
 ## Suggested Wrangler Setup
@@ -232,3 +240,131 @@ Revoke a token:
 curl -X POST "$WORKER_URL/v1/admin/agent-tokens/$TOKEN_ID/revoke" \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
+
+## Remediation API
+
+### Create a runbook
+
+```bash
+curl -X POST "$WORKER_URL/v1/admin/runbooks" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "slug": "switch-upstream",
+    "title": "Switch to fallback upstream",
+    "scope": "channel",
+    "actionType": "switch_upstream",
+    "paramsSchema": {
+      "type": "object",
+      "required": ["profile"]
+    },
+    "requiresApprovalDefault": false
+  }'
+```
+
+### Grant a node capability
+
+```bash
+curl -X POST "$WORKER_URL/v1/admin/node-capabilities" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "projectSlug": "proxy-prod",
+    "nodeSlug": "gw-1",
+    "actionType": "switch_upstream",
+    "config": {
+      "profiles": ["primary", "backup-1"]
+    }
+  }'
+```
+
+### Create a remediation policy
+
+```bash
+curl -X POST "$WORKER_URL/v1/admin/policies" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "projectSlug": "proxy-prod",
+    "incidentKind": "channel_down",
+    "runbookSlug": "switch-upstream",
+    "mode": "manual",
+    "maxAttempts": 2,
+    "cooldownSec": 900,
+    "match": {
+      "channelSlug": "gw1-http"
+    },
+    "params": {
+      "profile": "backup-1"
+    }
+  }'
+```
+
+### Plan remediation for an incident
+
+```bash
+curl -X POST "$WORKER_URL/v1/admin/incidents/$INCIDENT_ID/remediation/plan" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+### Create an action for an incident
+
+```bash
+curl -X POST "$WORKER_URL/v1/admin/incidents/$INCIDENT_ID/remediation/actions" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "runbookSlug": "switch-upstream",
+    "params": {
+      "profile": "backup-1"
+    }
+  }'
+```
+
+### Approve an action
+
+```bash
+curl -X POST "$WORKER_URL/v1/admin/actions/$ACTION_ID/approve" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "decision": "approve",
+    "by": "admin"
+  }'
+```
+
+### List actions and action events
+
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "$WORKER_URL/v1/admin/actions?project=proxy-prod"
+```
+
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "$WORKER_URL/v1/admin/actions/$ACTION_ID/events"
+```
+
+## Node Agent
+
+The repository now includes a minimal Go agent in [agent/main.go](/mnt/usb_hdd1/Projects/cloudflare-openai-proxy/agent/main.go).
+
+The agent:
+
+- sends heartbeats with local checks;
+- polls `POST /v1/agent/pull-actions`;
+- executes only allowlisted actions;
+- posts progress and final result to `POST /v1/agent/actions/:id/result`.
+
+Files:
+
+- example config: [agent/config.example.yaml](/mnt/usb_hdd1/Projects/cloudflare-openai-proxy/agent/config.example.yaml)
+- example systemd unit: [agent/vds-proxy-agent.service.example](/mnt/usb_hdd1/Projects/cloudflare-openai-proxy/agent/vds-proxy-agent.service.example)
+
+Current allowlisted action executors in the agent:
+
+- `restart_service`
+- `reload_service`
+- `switch_upstream`
+- `drain_node`
+- `collect_diagnostics`
