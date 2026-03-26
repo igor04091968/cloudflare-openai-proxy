@@ -9,6 +9,7 @@ The first MVP focuses on:
 - channel health tracking for HTTP, HTTPS, TCP, and TLS checks;
 - incident creation and recovery tracking in D1;
 - scheduled sweeps that detect stale nodes and run edge-side health checks;
+- manual admin utilities for sweeps, incident timelines, and agent token lifecycle;
 - optional Workers AI incident summaries.
 
 ## Worker Resources
@@ -158,4 +159,55 @@ Public:
 
 ```bash
 curl "$WORKER_URL/v1/status/proxy-prod?token=$PUBLIC_STATUS_TOKEN"
+```
+
+### List incidents and incident events
+
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "$WORKER_URL/v1/admin/incidents?project=proxy-prod"
+```
+
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "$WORKER_URL/v1/admin/incidents/$INCIDENT_ID/events"
+```
+
+### Run a manual sweep
+
+This is useful before cron is trusted in production.
+
+```bash
+curl -X POST "$WORKER_URL/v1/admin/sweeps/run" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"projectSlug":"proxy-prod"}'
+```
+
+### Manage agent tokens
+
+List tokens:
+
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "$WORKER_URL/v1/admin/agent-tokens?project=proxy-prod"
+```
+
+Issue a new token:
+
+```bash
+curl -X POST "$WORKER_URL/v1/admin/agent-tokens" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "projectSlug": "proxy-prod",
+    "name": "secondary-agent"
+  }'
+```
+
+Revoke a token:
+
+```bash
+curl -X POST "$WORKER_URL/v1/admin/agent-tokens/$TOKEN_ID/revoke" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 ```

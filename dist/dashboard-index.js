@@ -150,6 +150,12 @@ async function handleRequest(request, env) {
     const result = await listIncidents(env, projectSlug);
     return json(okEnvelope({ incidents: result }));
   }
+  if (request.method === "GET" && path.startsWith("/v1/admin/incidents/") && path.endsWith("/events")) {
+    await requireAdmin(request, env);
+    const incidentId = path.split("/")[4];
+    const result = await listIncidentEvents(env, incidentId);
+    return json(okEnvelope({ incidentId, events: result }));
+  }
   if (request.method === "POST" && path.startsWith("/v1/admin/incidents/") && path.endsWith("/resolve")) {
     await requireAdmin(request, env);
     const incidentId = path.split("/")[4];
@@ -160,6 +166,30 @@ async function handleRequest(request, env) {
     await requireAdmin(request, env);
     const incidentId = path.split("/")[4];
     const result = await analyzeIncidentWithAi(env, incidentId);
+    return json(okEnvelope(result));
+  }
+  if (request.method === "GET" && path === "/v1/admin/agent-tokens") {
+    await requireAdmin(request, env);
+    const projectSlug = url.searchParams.get("project");
+    const result = await listAgentTokens(env, projectSlug);
+    return json(okEnvelope({ tokens: result }));
+  }
+  if (request.method === "POST" && path === "/v1/admin/agent-tokens") {
+    await requireAdmin(request, env);
+    const body = await readJson(request);
+    const result = await issueAgentToken(env, body);
+    return json(okEnvelope(result), { status: 201 });
+  }
+  if (request.method === "POST" && path.startsWith("/v1/admin/agent-tokens/") && path.endsWith("/revoke")) {
+    await requireAdmin(request, env);
+    const tokenId = path.split("/")[4];
+    const result = await revokeAgentToken(env, tokenId);
+    return json(okEnvelope(result));
+  }
+  if (request.method === "POST" && path === "/v1/admin/sweeps/run") {
+    await requireAdmin(request, env);
+    const body = request.headers.get("content-length") === "0" ? {} : await readOptionalJson(request);
+    const result = await runScheduledSweep(env, Date.now(), { projectSlug: body.projectSlug || null });
     return json(okEnvelope(result));
   }
   if (request.method === "POST" && path === "/v1/agent/heartbeat") {
@@ -203,6 +233,20 @@ async function requireAgent(request, env) {
   }
   await env.DB.prepare("UPDATE agent_tokens SET last_used_at = ?1 WHERE id = ?2").bind(nowIso(), row.id).run();
   return row;
+}
+async function readOptionalJson(request) {
+  if ((request.headers.get("content-length") || "") === "0") {
+    return {};
+  }
+  const text = await request.text();
+  if (!text.trim()) {
+    return {};
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new HttpError(400, "invalid_json", "Body must contain valid JSON");
+  }
 }
 function bearerToken(request) {
   const header = request.headers.get("authorization") || "";
@@ -524,6 +568,89 @@ async function listIncidents(env, projectSlug) {
      LIMIT 100`
   ).bind(project.id).all().then((res) => res.results);
 }
+async function listIncidentEvents(env, incidentId) {
+  assertDb(env);
+  const incident = await env.DB.prepare("SELECT id FROM incidents WHERE id = ?1").bind(incidentId).first();
+  if (!incident) {
+    throw new HttpError(404, "incident_not_found", `Incident "${incidentId}" was not found`);
+  }
+  const result = await env.DB.prepare(
+    `SELECT id, incident_id, kind, payload_json, created_at
+     FROM incident_events
+     WHERE incident_id = ?1
+     ORDER BY created_at ASC`
+  ).bind(incidentId).all();
+  return result.results.map((row) => ({
+    ...row,
+    payload: safeJsonParse(row.payload_json, {})
+  }));
+}
+async function listAgentTokens(env, projectSlug) {
+  assertDb(env);
+  if (projectSlug) {
+    const project = await requireProject(env, projectSlug);
+    return env.DB.prepare(
+      `SELECT at.id, at.project_id, p.slug AS project_slug, at.name, at.created_at, at.last_used_at, at.revoked_at
+       FROM agent_tokens at
+       JOIN projects p ON p.id = at.project_id
+       WHERE at.project_id = ?1
+       ORDER BY at.created_at DESC`
+    ).bind(project.id).all().then((res) => res.results);
+  }
+  return env.DB.prepare(
+    `SELECT at.id, at.project_id, p.slug AS project_slug, at.name, at.created_at, at.last_used_at, at.revoked_at
+     FROM agent_tokens at
+     JOIN projects p ON p.id = at.project_id
+     ORDER BY at.created_at DESC
+     LIMIT 100`
+  ).all().then((res) => res.results);
+}
+async function issueAgentToken(env, body) {
+  assertDb(env);
+  const project = await requireProject(env, body.projectSlug);
+  const now = nowIso();
+  const token = crypto.randomUUID();
+  const tokenHash = await sha256Hex(token);
+  const name = String(body.name || `${project.slug}-agent-${now.slice(11, 19).replace(/:/g, "")}`);
+  const id = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO agent_tokens (id, project_id, name, token_hash, created_at)
+     VALUES (?1, ?2, ?3, ?4, ?5)`
+  ).bind(id, project.id, name, tokenHash, now).run();
+  const record = await env.DB.prepare(
+    `SELECT at.id, at.project_id, p.slug AS project_slug, at.name, at.created_at, at.last_used_at, at.revoked_at
+     FROM agent_tokens at
+     JOIN projects p ON p.id = at.project_id
+     WHERE at.id = ?1`
+  ).bind(id).first();
+  return {
+    token,
+    record
+  };
+}
+async function revokeAgentToken(env, tokenId) {
+  assertDb(env);
+  const token = await env.DB.prepare(
+    `SELECT at.id, at.project_id, p.slug AS project_slug, at.name, at.created_at, at.last_used_at, at.revoked_at
+     FROM agent_tokens at
+     JOIN projects p ON p.id = at.project_id
+     WHERE at.id = ?1`
+  ).bind(tokenId).first();
+  if (!token) {
+    throw new HttpError(404, "agent_token_not_found", `Agent token "${tokenId}" was not found`);
+  }
+  if (!token.revoked_at) {
+    await env.DB.prepare(
+      "UPDATE agent_tokens SET revoked_at = ?1 WHERE id = ?2"
+    ).bind(nowIso(), tokenId).run();
+  }
+  return env.DB.prepare(
+    `SELECT at.id, at.project_id, p.slug AS project_slug, at.name, at.created_at, at.last_used_at, at.revoked_at
+     FROM agent_tokens at
+     JOIN projects p ON p.id = at.project_id
+     WHERE at.id = ?1`
+  ).bind(tokenId).first();
+}
 async function resolveIncident(env, incidentId, reason) {
   assertDb(env);
   const now = nowIso();
@@ -570,24 +697,51 @@ async function analyzeIncidentWithAi(env, incidentId) {
   await appendIncidentEvent(env, incidentId, "ai_analysis", { model, text });
   return { incidentId, model, analysis: text };
 }
-async function runScheduledSweep(env, scheduledTime = Date.now()) {
+async function runScheduledSweep(env, scheduledTime = Date.now(), options = {}) {
   assertDb(env);
   const now = nowIso(scheduledTime);
-  const nodes = await env.DB.prepare(
+  const scopedProject = options.projectSlug ? await requireProject(env, options.projectSlug) : null;
+  const nodesQuery = scopedProject ? env.DB.prepare(
     `SELECT id, project_id, slug, expected_heartbeat_sec, last_heartbeat_at
-     FROM nodes`
-  ).all();
+         FROM nodes
+         WHERE project_id = ?1`
+  ).bind(scopedProject.id) : env.DB.prepare(
+    `SELECT id, project_id, slug, expected_heartbeat_sec, last_heartbeat_at
+         FROM nodes`
+  );
+  const channelsQuery = scopedProject ? env.DB.prepare(
+    `SELECT id, project_id, protocol, target, timeout_ms, expected_statuses_json
+         FROM channels
+         WHERE project_id = ?1`
+  ).bind(scopedProject.id) : env.DB.prepare(
+    `SELECT id, project_id, protocol, target, timeout_ms, expected_statuses_json
+         FROM channels`
+  );
+  const nodes = await nodesQuery.all();
+  const summary = {
+    scope: scopedProject ? { project: scopedProject.slug } : { project: null },
+    startedAt: now,
+    nodesEvaluated: 0,
+    nodesMarkedStale: 0,
+    nodesHealthy: 0,
+    channelsEvaluated: 0,
+    channelsPassed: 0,
+    channelsFailed: 0
+  };
   for (const node of nodes.results) {
     const stale = isNodeStale(node.last_heartbeat_at, node.expected_heartbeat_sec || DEFAULT_HEARTBEAT_SEC, scheduledTime);
     await env.DB.prepare(
       "UPDATE nodes SET status = ?1, updated_at = ?2 WHERE id = ?3"
     ).bind(stale ? "stale" : "healthy", now, node.id).run();
     await syncNodeStaleIncident(env, node.project_id, node.id, stale);
+    summary.nodesEvaluated += 1;
+    if (stale) {
+      summary.nodesMarkedStale += 1;
+    } else {
+      summary.nodesHealthy += 1;
+    }
   }
-  const channels = await env.DB.prepare(
-    `SELECT id, project_id, protocol, target, timeout_ms, expected_statuses_json
-     FROM channels`
-  ).all();
+  const channels = await channelsQuery.all();
   for (const channel of channels.results) {
     if (!["http", "https", "head"].includes(channel.protocol)) {
       continue;
@@ -628,7 +782,14 @@ async function runScheduledSweep(env, scheduledTime = Date.now()) {
       checkResult.status,
       checkResult.error || "Scheduled check failed"
     );
+    summary.channelsEvaluated += 1;
+    if (checkResult.status === "pass") {
+      summary.channelsPassed += 1;
+    } else {
+      summary.channelsFailed += 1;
+    }
   }
+  return summary;
 }
 async function executeChannelCheck(channel) {
   const protocol = channel.protocol === "head" ? "https" : channel.protocol;
@@ -779,6 +940,13 @@ function extractAiText(response) {
   if (response?.response) return response.response;
   if (Array.isArray(response?.result)) return response.result.join("\n");
   return JSON.stringify(response);
+}
+function safeJsonParse(value, fallback = null) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
 }
 export {
   index_default as default
