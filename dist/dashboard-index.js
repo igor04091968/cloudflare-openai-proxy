@@ -551,7 +551,7 @@ async function scheduleIncidentRemediation(env, incidentId) {
       params: item.effectiveParams,
       attemptNo,
       resultSummary: null,
-      nodeId: incident.node_id || null,
+      nodeId: incident.node_id || incident.channel_node_id || null,
       channelId: incident.channel_id || null
     });
     created.push(action);
@@ -586,7 +586,7 @@ async function prepareActionCreation(env, incident, body) {
     params,
     attemptNo,
     resultSummary: null,
-    nodeId: incident.node_id || null,
+    nodeId: incident.node_id || incident.channel_node_id || null,
     channelId: incident.channel_id || null
   };
 }
@@ -729,7 +729,8 @@ async function matchPoliciesForIncident(env, incident) {
     if (!incidentMatches(policy, incident, matchJson)) {
       continue;
     }
-    const capability = incident.node_id ? await findNodeCapability(env, incident.node_id, row.action_type) : null;
+    const capabilityNodeId = incident.node_id || incident.channel_node_id || null;
+    const capability = capabilityNodeId ? await findNodeCapability(env, capabilityNodeId, row.action_type) : null;
     const effectiveParams = {
       ...safeJsonParse(policy.params_json, {})
     };
@@ -848,7 +849,7 @@ async function requireAction(env, id) {
 async function requireIncident(env, id) {
   const row = await env.DB.prepare(
     `SELECT i.*, p.slug AS project_slug, n.slug AS node_slug, n.region AS node_region,
-            c.slug AS channel_slug, c.protocol AS channel_protocol, c.target AS channel_target
+            c.slug AS channel_slug, c.protocol AS channel_protocol, c.target AS channel_target, c.node_id AS channel_node_id
      FROM incidents i
      JOIN projects p ON p.id = i.project_id
      LEFT JOIN nodes n ON n.id = i.node_id
